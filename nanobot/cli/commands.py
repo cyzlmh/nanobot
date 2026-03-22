@@ -997,12 +997,62 @@ def _get_bridge_dir() -> Path:
 
 
 @channels_app.command("login")
-def channels_login():
-    """Link device via QR code."""
+def channels_login(
+    channel: str = typer.Option(
+        "whatsapp",
+        "--channel",
+        help="Channel to login: whatsapp (default) or wechat",
+    ),
+):
+    """Link a channel account via QR code."""
+    from nanobot.config.loader import load_config
+
+    normalized = (channel or "").strip().lower()
+
+    if normalized in {"wechat", "weixin"}:
+        from nanobot.bus.queue import MessageBus
+        from nanobot.channels.wechat import WeChatChannel, WeChatConfig
+
+        config = load_config()
+        section = getattr(config.channels, "wechat", None)
+        if isinstance(section, dict):
+            wechat_cfg = WeChatConfig.model_validate(section)
+        elif isinstance(section, WeChatConfig):
+            wechat_cfg = section
+        elif section is None:
+            wechat_cfg = WeChatConfig()
+        else:
+            try:
+                wechat_cfg = WeChatConfig.model_validate(section.model_dump(by_alias=True))
+            except Exception:
+                wechat_cfg = WeChatConfig()
+
+        wechat_cfg.enabled = True
+        channel_impl = WeChatChannel(wechat_cfg, MessageBus())
+
+        console.print(f"{__logo__} Starting WeChat QR login...")
+        console.print("Scan the QR code shown below.\n")
+
+        success = asyncio.run(channel_impl.login())
+        if not success:
+            console.print("[red]WeChat login failed[/red]")
+            raise typer.Exit(1)
+
+        console.print("[green]✓[/green] WeChat login successful")
+        console.print(f"[dim]Bot ID: {wechat_cfg.ilink_bot_id}[/dim]")
+        console.print("[dim]Credentials are saved in your runtime data directory.[/dim]")
+        return
+
+    if normalized not in {"whatsapp", "wa"}:
+        console.print(
+            f"[red]Unsupported channel: {channel}[/red] "
+            "(supported: whatsapp, wechat)"
+        )
+        raise typer.Exit(1)
+
     import shutil
     import subprocess
 
-    from nanobot.config.loader import load_config
     from nanobot.config.paths import get_runtime_subdir
 
     config = load_config()
